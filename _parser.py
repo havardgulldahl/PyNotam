@@ -1,22 +1,30 @@
 import parsimonious
+import re
 import timeutils
 
 grammar = parsimonious.Grammar(
     r"""
-    root = "(" header __ q_clause __ a_clause __ b_clause __ (c_clause __)? (d_clause __)? e_clause (__ f_clause __ g_clause)? ")"
+    # Use optional whitespace separators '_' (0+ spaces/newlines) instead of '__' (1+) because
+    # some clause productions (e.g. C) with trailing _*) may already consume the separating
+    # whitespace, leaving none for the root rule and causing a parse failure at the next clause.
+    root = "(" _ header _ q_clause _ a_clause _ b_clause _ (c_clause _)? (d_clause _)? e_clause (_ f_clause _ g_clause)? ")"
 
     header = notamn_header / notamr_header / notamc_header
     notamn_header = notam_id _ "NOTAMN"
     notamr_header = notam_id _ "NOTAMR" _ notam_id
     notamc_header = notam_id _ "NOTAMC" _ notam_id
-    notam_id = ~r"[A-Z][0-9]{4}/[0-9]{2}"
+    # NOTAM id: Series letter + 4 digits + '/' + 2-digit year, optional part designator (letter + 2 digits), e.g. C3795/25A05
+    notam_id = ~r"[A-Z][0-9]{4}/[0-9]{2}([A-Z][0-9]{2})?"
 
-    q_clause = "Q)" _ fir "/" notam_code "/" traffic_type "/" purpose "/" scope "/" lower_limit "/" upper_limit "/" area_of_effect
+    q_clause = "Q)" _? fir "/" notam_code "/" traffic_type "/" purpose "/" scope "/" lower_limit "/" upper_limit ("/" area_of_effect)?
     fir = icao_id
     notam_code = ~r"Q[A-Z]{4}"
-    traffic_type = ~r"(?=[IVK]+)I?V?K?"
-    purpose = ~r"(?=[NBOMK]+)N?B?O?M?K?"
-    scope = ~"(?=[AEWK]+)A?E?W?K?"
+    # traffic_type may be empty (some NOTAMs omit it): allow zero or more of I,V,K
+    traffic_type = ~r"[IVK]*"
+    # purpose may also be empty (some NOTAMs show consecutive slashes): allow zero or more of N,B,O,M,K
+    purpose = ~r"[NBOMK]*"
+    # Allow any non-empty combination (with possible repeats) of A,E,W,K (some states repeat letters, e.g. EE)
+    scope = ~r"(?=[AEWK]+)[AEWK]+"
     lower_limit = int3
     upper_limit = int3
     area_of_effect = ~r"(?P<lat>[0-9]{4}[NS])(?P<long>[0-9]{5}[EW])(?P<radius>[0-9]{3})"
@@ -25,7 +33,7 @@ grammar = parsimonious.Grammar(
     location_icao = icao_id
 
     b_clause = "B)" _ datetime
-    c_clause = "C)" _ ((datetime estimated?) / permanent)
+    c_clause = "C)" _ ((datetime _* estimated? _*) / permanent)
     estimated = "EST"
     permanent = "PERM"
 
@@ -34,13 +42,16 @@ grammar = parsimonious.Grammar(
     f_clause = "F)" _ till_next_clause
     g_clause = "G)" _ till_next_clause
 
-    _ = " "
+    _ = (" " / "\n")*
     __ = (" " / "\n")+
     icao_id = ~r"[A-Z]{4}"
     datetime = int2 int2 int2 int2 int2 # year month day hours minutes
     int2 = ~r"[0-9]{2}"
     int3 = ~r"[0-9]{3}"
-    till_next_clause = ~r".*?(?=(?:\)$)|(?:\s[A-Z]\)))"s
+    # Stop lazily at either the final closing parenthesis of the NOTAM or a space/newline
+    # followed by a valid next clause label (A-G). Avoid matching generic capital letters
+    # inside the body text (e.g. '(6100 M).)') which previously caused premature termination.
+    till_next_clause = ~r".*?(?=(?:\)$)|(?:\s[A-G]\)))"s
 """
 )
 
@@ -103,9 +114,37 @@ class NotamParseVisitor(parsimonious.NodeVisitor):
     visit_notam_code = visit_simple_regex
 
     def visit_q_clause(self, node, visited_children):
-        self.tgt.fir = visited_children[2]
-        self.tgt.fl_lower = visited_children[12]
-        self.tgt.fl_upper = visited_children[14]
+        # Re-parse the Q) clause text to robustly support optional area_of_effect
+        text = node.text
+        # Strip leading 'Q)' and whitespace
+        q_body = text[2:].lstrip() if text.startswith("Q)") else text
+        parts = q_body.split("/")
+        # Expected layout: FIR, NOTAM_CODE, TRAFFIC, PURPOSE, SCOPE, LOWER, UPPER, [AREA]
+        if len(parts) < 7:
+            raise ValueError(f"Malformed Q clause: {text}")
+        fir, notam_code, traffic, purpose, scope, lower, upper, *rest = parts
+        self.tgt.fir = fir[:4]
+        # Store decoded FLs
+        try:
+            self.tgt.fl_lower = int(lower)
+            self.tgt.fl_upper = int(upper)
+        except ValueError:
+            self.tgt.fl_lower = None
+            self.tgt.fl_upper = None
+        # Optional area_of_effect
+        area = rest[0] if rest else None
+        if area:
+            m = re.match(
+                r"^(?P<lat>[0-9]{4}[NS])(?P<long>[0-9]{5}[EW])(?P<radius>[0-9]{3})$",
+                area,
+            )
+            if m:
+                self.tgt.area = m.groupdict()
+                self.tgt.area["radius"] = int(self.tgt.area["radius"])
+        else:
+            # Leave existing area if already set by grammar, else None
+            if not hasattr(self.tgt, "area"):
+                self.tgt.area = None
 
     def visit_notam_code(self, *args):
         self.tgt.notam_code = self.visit_simple_regex(
@@ -207,3 +246,6 @@ class NotamParseVisitor(parsimonious.NodeVisitor):
 
     def visit_root(self, node, _):
         self.tgt.full_text = node.full_text
+        # If C) clause missing, provide a default valid_till (None to indicate open ended)
+        if not hasattr(self.tgt, "valid_till"):
+            self.tgt.valid_till = None
