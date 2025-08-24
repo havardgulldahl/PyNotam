@@ -7,6 +7,32 @@ from typing import Optional
 import notam
 
 
+def _normalize_notam_text(text: str) -> str:
+    """Normalize NOTAM text for parsing while preserving semantic content.
+
+    Operations:
+      - Strip UTF-8 BOM if present.
+      - Normalize line endings to \n.
+      - Remove leading/trailing blank lines.
+      - Trim trailing whitespace on each line (keeps original indentation/inner spaces).
+    We deliberately avoid collapsing internal multiple blank lines or internal spacing
+    to keep clause/body indices meaningful.
+    """
+    if text.startswith("\ufeff"):
+        text = text.lstrip("\ufeff")
+    # Normalize line endings
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = text.split("\n")
+    # Trim trailing whitespace per line
+    lines = [ln.rstrip() for ln in lines]
+    # Drop leading/trailing blank lines
+    while lines and lines[0].strip() == "":
+        lines.pop(0)
+    while lines and lines[-1].strip() == "":
+        lines.pop()
+    return "\n".join(lines)
+
+
 def read_input(path: Optional[str]) -> str:
     if path and path != "-":
         try:
@@ -42,7 +68,11 @@ def notam_to_dict(n: notam.Notam) -> dict:
         "ref_notam_id": n.ref_notam_id,
         "fir": n.fir,
         "notam_code": n.notam_code,
-        "traffic_type": sorted(n.traffic_type) if isinstance(n.traffic_type, set) else n.traffic_type,
+        "traffic_type": (
+            sorted(n.traffic_type)
+            if isinstance(n.traffic_type, set)
+            else n.traffic_type
+        ),
         "purpose": sorted(n.purpose) if isinstance(n.purpose, set) else n.purpose,
         "scope": sorted(n.scope) if isinstance(n.scope, set) else n.scope,
         "fl_lower": n.fl_lower,
@@ -92,13 +122,14 @@ def parse_args(argv=None) -> argparse.Namespace:
 
 def main(argv=None) -> int:
     args = parse_args(argv)
-    text = read_input(args.input)
+    raw_text = read_input(args.input)
+    text = _normalize_notam_text(raw_text)
 
     try:
         n = notam.Notam.from_str(text)
     except notam.NotamParseError as e:
         loc = f" (line {e.line}, col {e.column})" if e.line and e.column else ""
-        snippet = f"\n>> {e.snippet}" if getattr(e, 'snippet', None) else ""
+        snippet = f"\n>> {e.snippet}" if getattr(e, "snippet", None) else ""
         print(f"Parse error{loc}: {e}{snippet}", file=sys.stderr)
         return 1
     except Exception as e:
