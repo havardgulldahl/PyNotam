@@ -11,7 +11,9 @@ license = { file = "LICENSE" }
 requires-python = ">=3.8"
 authors = [
   { name = "Slava K", email = "" },
-  { name = "Håvard Gulldahl", email = "" }
+]
+maintainers = [
+  { name = "Håvard Gulldahl", email = "havard@gulldahl.no" }
 ]
 keywords = ["NOTAM", "aviation", "ICAO", "parser", "aeronautical"]
 classifiers = [
@@ -20,7 +22,7 @@ classifiers = [
   "Intended Audience :: Science/Research",
   "Topic :: Scientific/Engineering :: Information Analysis",
   "Topic :: Text Processing :: Linguistic",
-  "License :: OSI Approved :: MIT License",
+  "License :: OSI Approved :: GPL2 License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.8",
@@ -36,13 +38,13 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/havardgulldahl/PyNotam"
-Source = "https://github.com/havardgulldahl/PyNotam"
+Source = "https://github.com/slavak/PyNotam"
 Issues = "https://github.com/havardgulldahl/PyNotam/issues"
 
 # Optional: define a simple CLI that pretty-prints a decoded NOTAM from stdin or a file.
 # Implement a small wrapper function in notam.py or a new module if you want a CLI.
 [project.scripts]
-pynotam = "notam:main_cli"
+pynotam = "cli:main"
 
 [tool.hatch.build.targets.wheel]
 # Using the existing flat layout (no src/). List top-level packages/modules to include.
@@ -62,8 +64,27 @@ include = [
 ]
 exclude = [
   ".idea/**",
-  ".gitignore"
+  ".gitignore",
+  "__pycache__/**",
+  "*.pyc"
 ]
+
+# Hatch environments for testing and dev tooling
+[tool.hatch.envs.default]
+python = "3.11"
+
+[tool.hatch.envs.test]
+# unittest doesn't require extra deps
+python = "3.11"
+commands = [
+  # Run unittest discovery in the tests/ directory
+  "python -m unittest discover -s tests -p 'test*.py' -v"
+]
+
+# Convenience alias: `hatch test`
+[tool.hatch.envs.test.scripts]
+run = "python -m unittest discover -s tests -p 'test*.py' -v"
+
 
 # If you prefer Git-tag-derived versions later, you can switch to hatch-vcs:
 # [build-system]
