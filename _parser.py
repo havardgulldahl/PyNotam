@@ -2,6 +2,20 @@ import parsimonious
 import re
 import timeutils
 
+# Precompiled regex for Q) area segment
+AREA_RE = re.compile(
+    r"^(?P<lat>[0-9]{4}[NS])(?P<long>[0-9]{5}[EW])(?P<radius>[0-9]{3})$"
+)
+
+
+class ParseQClauseError(Exception):
+    """Raised when a Q) clause cannot be parsed into expected parts."""
+
+    def __init__(self, clause: str, message: str = "Malformed Q clause"):
+        super().__init__(f"{message}: {clause}")
+        self.clause = clause
+
+
 grammar = parsimonious.Grammar(
     r"""
     # Use optional whitespace separators '_' (0+ spaces/newlines) instead of '__' (1+) because
@@ -86,7 +100,9 @@ class NotamParseVisitor(parsimonious.NodeVisitor):
         """Maps coded strings, where each character encodes a special meaning, into a corresponding decoded set
         according to the meanings dictionary (see examples of usage further below)"""
         codes = self.visit_simple_regex(*args)
-        return set([meanings[code] for code in codes])
+        if not codes:
+            return set()
+        return {meanings[code] for code in codes}
 
     def visit_intX(self, *args):
         v = self.visit_simple_regex(*args)
@@ -105,46 +121,35 @@ class NotamParseVisitor(parsimonious.NodeVisitor):
 
         return inner
 
-    visit_notamn_header = visit_notamX_header.__func__("NEW")
-    visit_notamr_header = visit_notamX_header.__func__("REPLACE")
-    visit_notamc_header = visit_notamX_header.__func__("CANCEL")
+    visit_notamn_header = visit_notamX_header("NEW")
+    visit_notamr_header = visit_notamX_header("REPLACE")
+    visit_notamc_header = visit_notamX_header("CANCEL")
 
     visit_icao_id = visit_simple_regex
     visit_notam_id = visit_simple_regex
     visit_notam_code = visit_simple_regex
 
     def visit_q_clause(self, node, visited_children):
-        # Re-parse the Q) clause text to robustly support optional area_of_effect
+        """Robust extraction of Q) clause fields allowing optional empties and area."""
         text = node.text
-        # Strip leading 'Q)' and whitespace
         q_body = text[2:].lstrip() if text.startswith("Q)") else text
         parts = q_body.split("/")
-        # Expected layout: FIR, NOTAM_CODE, TRAFFIC, PURPOSE, SCOPE, LOWER, UPPER, [AREA]
         if len(parts) < 7:
-            raise ValueError(f"Malformed Q clause: {text}")
+            raise ParseQClauseError(text, "Too few parts")
         fir, notam_code, traffic, purpose, scope, lower, upper, *rest = parts
         self.tgt.fir = fir[:4]
-        # Store decoded FLs
-        try:
-            self.tgt.fl_lower = int(lower)
-            self.tgt.fl_upper = int(upper)
-        except ValueError:
-            self.tgt.fl_lower = None
-            self.tgt.fl_upper = None
-        # Optional area_of_effect
+        self.tgt.fl_lower = int(lower) if lower.isdigit() else None
+        self.tgt.fl_upper = int(upper) if upper.isdigit() else None
         area = rest[0] if rest else None
         if area:
-            m = re.match(
-                r"^(?P<lat>[0-9]{4}[NS])(?P<long>[0-9]{5}[EW])(?P<radius>[0-9]{3})$",
-                area,
-            )
+            m = AREA_RE.match(area)
             if m:
                 self.tgt.area = m.groupdict()
                 self.tgt.area["radius"] = int(self.tgt.area["radius"])
-        else:
-            # Leave existing area if already set by grammar, else None
-            if not hasattr(self.tgt, "area"):
+            elif not hasattr(self.tgt, "area"):
                 self.tgt.area = None
+        elif not hasattr(self.tgt, "area"):
+            self.tgt.area = None
 
     def visit_notam_code(self, *args):
         self.tgt.notam_code = self.visit_simple_regex(
