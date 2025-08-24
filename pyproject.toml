@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pynotam"
+version = "0.1.0"
+description = "ICAO NOTAM parser: parse standard NOTAMs and extract structured information."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.8"
+authors = [
+  { name = "Slava K", email = "" },
+  { name = "Håvard Gulldahl", email = "" }
+]
+keywords = ["NOTAM", "aviation", "ICAO", "parser", "aeronautical"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+  "Topic :: Text Processing :: Linguistic",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13"
+]
+dependencies = [
+  "parsimonious>=0.10,<0.11"
+]
+
+[project.urls]
+Homepage = "https://github.com/havardgulldahl/PyNotam"
+Source = "https://github.com/havardgulldahl/PyNotam"
+Issues = "https://github.com/havardgulldahl/PyNotam/issues"
+
+# Optional: define a simple CLI that pretty-prints a decoded NOTAM from stdin or a file.
+# Implement a small wrapper function in notam.py or a new module if you want a CLI.
+[project.scripts]
+pynotam = "notam:main_cli"
+
+[tool.hatch.build.targets.wheel]
+# Using the existing flat layout (no src/). List top-level packages/modules to include.
+# The project exposes multiple top-level modules, not a package directory, so include them.
+packages = []
+
+[tool.hatch.build]
+# Include the top-level Python modules in the wheel
+include = [
+  "_abbr.py",
+  "_parser.py",
+  "notam.py",
+  "timeutils.py",
+  "README.md",
+  "LICENSE",
+  "tests/**"
+]
+exclude = [
+  ".idea/**",
+  ".gitignore"
+]
+
+# If you prefer Git-tag-derived versions later, you can switch to hatch-vcs:
+# [build-system]
+# requires = ["hatchling>=1.25", "hatch-vcs>=0.4"]
+# build-backend = "hatchling.build"
+# [tool.hatch.version]
+# source = "vcs"
+# (and remove version from [project])
