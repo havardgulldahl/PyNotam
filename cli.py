@@ -96,8 +96,13 @@ def main(argv=None) -> int:
 
     try:
         n = notam.Notam.from_str(text)
+    except notam.NotamParseError as e:
+        loc = f" (line {e.line}, col {e.column})" if e.line and e.column else ""
+        snippet = f"\n>> {e.snippet}" if getattr(e, 'snippet', None) else ""
+        print(f"Parse error{loc}: {e}{snippet}", file=sys.stderr)
+        return 1
     except Exception as e:
-        print(f"Error: failed to parse NOTAM: {e}", file=sys.stderr)
+        print(f"Unexpected error while parsing NOTAM: {e}", file=sys.stderr)
         return 1
 
     if args.json:
