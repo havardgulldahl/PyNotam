@@ -101,6 +101,14 @@ class Notam:
         """Parse NOTAM text into a Notam instance.
 
         Raises NotamParseError with contextual line/column info on failure."""
+        # Basic corruption check: require starting '(' and ending ')'
+        if not (s.strip().startswith("(") and s.rstrip().endswith(")")):
+            raise NotamParseError(
+                "Corrupted NOTAM: missing opening or closing parenthesis",
+                line=None,
+                column=None,
+                snippet=s.splitlines()[-1].strip()[:120] if s.strip() else None,
+            )
         n = Notam()
         visitor = _parser.NotamParseVisitor(n)
         try:
