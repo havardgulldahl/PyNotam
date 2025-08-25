@@ -2,9 +2,9 @@ import parsimonious
 import re
 import timeutils
 
-# Precompiled regex for Q) area segment
+# Precompiled regex for Q) area segment (radius optional: some NOTAMs omit distance)
 AREA_RE = re.compile(
-    r"^(?P<lat>[0-9]{4}[NS])(?P<long>[0-9]{5}[EW])(?P<radius>[0-9]{3})$"
+    r"^(?P<lat>[0-9]{4}[NS])(?P<long>[0-9]{5}[EW])(?P<radius>[0-9]{0,3})$"
 )
 
 
@@ -40,8 +40,9 @@ grammar = parsimonious.Grammar(
     # Allow any non-empty combination (with possible repeats) of A,E,W,K (some states repeat letters, e.g. EE)
     scope = ~r"(?=[AEWK]+)[AEWK]+"
     lower_limit = int3
-    upper_limit = int3
-    area_of_effect = ~r"(?P<lat>[0-9]{4}[NS])(?P<long>[0-9]{5}[EW])(?P<radius>[0-9]{3})"
+    # Upper limit may be blank (represented by three spaces). Accept any 3 chars of digits or spaces.
+    upper_limit = int3_blank
+    area_of_effect = ~r"(?P<lat>[0-9]{4}[NS])(?P<long>[0-9]{5}[EW])(?P<radius>[0-9]{0,3})"
 
     a_clause = "A)" _ location_icao ((" " / "/") location_icao)*
     location_icao = icao_id
@@ -62,6 +63,7 @@ grammar = parsimonious.Grammar(
     datetime = int2 int2 int2 int2 int2 # year month day hours minutes
     int2 = ~r"[0-9]{2}"
     int3 = ~r"[0-9]{3}"
+    int3_blank = ~r"[0-9 ]{3}"
     # Stop lazily at either the final closing parenthesis of the NOTAM or a space/newline
     # followed by a valid next clause label (A-G). Avoid matching generic capital letters
     # inside the body text (e.g. '(6100 M).)') which previously caused premature termination.
@@ -144,8 +146,16 @@ class NotamParseVisitor(parsimonious.NodeVisitor):
         if area:
             m = AREA_RE.match(area)
             if m:
-                self.tgt.area = m.groupdict()
-                self.tgt.area["radius"] = int(self.tgt.area["radius"])
+                gd = m.groupdict()
+                radius = gd.get("radius") or ""
+                if radius:
+                    self.tgt.area = {
+                        "lat": gd["lat"],
+                        "long": gd["long"],
+                        "radius": int(radius),
+                    }
+                elif not hasattr(self.tgt, "area"):
+                    self.tgt.area = None
             elif not hasattr(self.tgt, "area"):
                 self.tgt.area = None
         elif not hasattr(self.tgt, "area"):
@@ -185,10 +195,17 @@ class NotamParseVisitor(parsimonious.NodeVisitor):
         )
 
     def visit_area_of_effect(self, node, _):
-        self.tgt.area = (
-            node.match.groupdict()
-        )  # dictionary containing mappings for 'lat', 'long', and 'radius'
-        self.tgt.area["radius"] = int(self.tgt.area["radius"])
+        gd = node.match.groupdict()
+        radius = gd.get("radius") or ""
+        if radius:
+            self.tgt.area = {
+                "lat": gd["lat"],
+                "long": gd["long"],
+                "radius": int(radius),
+            }
+        else:
+            if not hasattr(self.tgt, "area"):
+                self.tgt.area = None
 
     def visit_a_clause(self, node, _):
         def _dfs_icao_id(n):
