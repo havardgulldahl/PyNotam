@@ -71,11 +71,17 @@ class Notam:
     indices_item_f: Optional[Tuple[int, int]] = None
     indices_item_g: Optional[Tuple[int, int]] = None
 
+    # Derived geometry (GeoJSON-like mapping) built from E) body text if recognizable.
+    # None if no geometry could be parsed or an error occurred (backwards compatible).
+    geometry: Optional[Dict[str, Any]] = None
+
     def decoded(self):
         """Returns the full text of the NOTAM, with ICAO abbreviations decoded into their un-abbreviated
         form where appropriate."""
 
         with _StringIO() as sb:
+            if not self.full_text:
+                return ""
             indices = [
                 getattr(self, "indices_item_{}".format(i)) for i in ("d", "e", "f", "g")
             ]
@@ -136,6 +142,28 @@ class Notam:
                 snippet=snippet,
                 original=e,
             ) from e
+
+        # Derive geometry (best-effort, swallow errors for backward compatibility)
+        try:  # noqa: SIM105
+            # Lazy imports so importing notam.py does not require shapely unless geometry accessed.
+            from _geo import build_parts_from_E, parse_alt_text  # type: ignore
+            from shapely.ops import unary_union  # type: ignore
+            from shapely.geometry import GeometryCollection, mapping  # type: ignore
+
+            body_text = n.body or ""
+            # Re-parse altitude limits if present; fall back to SFC/UNL placeholders.
+            f_alt = parse_alt_text(n.limit_lower or "SFC")
+            g_alt = parse_alt_text(n.limit_upper or "UNL")
+            parts = build_parts_from_E(body_text, f_alt, g_alt)
+            if parts:
+                geoms = [p.geom for p in parts]
+                try:
+                    merged = unary_union(geoms)
+                except Exception:  # pragma: no cover - defensive
+                    merged = GeometryCollection(geoms)
+                n.geometry = mapping(merged)
+        except Exception:  # pragma: no cover - never let geometry issues break parsing
+            n.geometry = None
         return n
 
     @staticmethod
